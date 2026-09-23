@@ -85,6 +85,26 @@ func (r *MaintenanceRepository) UpdateTx(tx *gorm.DB, m *model.MaintenanceRecord
 	return tx.Save(m).Error
 }
 
+// CountActiveTx 统计设备某类型下处于指定状态（待处理/处理中）的工单数（事务内，生成计划去重复用）。
+func (r *MaintenanceRepository) CountActiveTx(tx *gorm.DB, deviceID uint, mType string, statuses []string) (int64, error) {
+	var n int64
+	err := tx.Model(&model.MaintenanceRecord{}).
+		Where("device_id = ? AND type = ? AND status IN ?", deviceID, mType, statuses).
+		Count(&n).Error
+	return n, err
+}
+
+// LastCompletedTx 查询设备某类型最近一次已完成工单（按完成时间倒序，事务内）。
+func (r *MaintenanceRepository) LastCompletedTx(tx *gorm.DB, deviceID uint, mType, completedStatus string) (*model.MaintenanceRecord, error) {
+	var m model.MaintenanceRecord
+	err := tx.Where("device_id = ? AND type = ? AND status = ? AND executed_date IS NOT NULL", deviceID, mType, completedStatus).
+		Order("executed_date DESC, id DESC").First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &m, err
+}
+
 // SumCost 统计维修成本（被列表与统计接口复用）。
 func (r *MaintenanceRepository) SumCost() (float64, error) {
 	var sum float64

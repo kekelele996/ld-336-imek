@@ -8,3 +8,6 @@ func TimePtr(t time.Time) *time.Time { return &t }
 
 // BoolPtr 返回 bool 的指针。
 func BoolPtr(b bool) *bool { return &b }
+
+// IntPtr 返回 int 的指针。
+func IntPtr(v int) *int { return &v }

@@ -35,6 +35,7 @@ func New(cfg *config.Config) (*gorm.DB, error) {
 		&model.Device{},
 		&model.PurchaseRequest{},
 		&model.MaintenanceRecord{},
+		&model.MaintenanceStrategy{},
 		&model.CalibrationRecord{},
 		&model.TransferRequest{},
 		&model.ScrapRequest{},

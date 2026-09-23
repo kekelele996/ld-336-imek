@@ -12,20 +12,20 @@ import (
 	"github.com/medasset/medasset/internal/model"
 	"github.com/medasset/medasset/internal/repository"
 	"github.com/medasset/medasset/internal/util"
-	"github.com/medasset/medasset/pkg/pointerx"
 	"gorm.io/gorm"
 )
 
 // MaintenanceService 维护保养与故障维修服务。
 type MaintenanceService struct {
-	repo   *repository.MaintenanceRepository
-	device *repository.DeviceRepository
-	audit  *AuditService
-	log    *slog.Logger
+	repo     *repository.MaintenanceRepository
+	device   *repository.DeviceRepository
+	strategy *repository.MaintenanceStrategyRepository
+	audit    *AuditService
+	log      *slog.Logger
 }
 
-func NewMaintenanceService(repo *repository.MaintenanceRepository, device *repository.DeviceRepository, audit *AuditService, log *slog.Logger) *MaintenanceService {
-	return &MaintenanceService{repo: repo, device: device, audit: audit, log: log}
+func NewMaintenanceService(repo *repository.MaintenanceRepository, device *repository.DeviceRepository, strategy *repository.MaintenanceStrategyRepository, audit *AuditService, log *slog.Logger) *MaintenanceService {
+	return &MaintenanceService{repo: repo, device: device, strategy: strategy, audit: audit, log: log}
 }
 
 // Create 创建保养/维修工单（报修或计划执行）。
@@ -60,56 +60,150 @@ func (s *MaintenanceService) Create(req *dto.CreateMaintenanceReq, operator stri
 	return m, nil
 }
 
-// GeneratePlans 根据设备类型自动生成保养计划（日检/周检/月检/年检，无待处理计划时生成）。
+// GeneratePlans 按设备类别周期策略自动生成保养计划：
+// 仅处理启用策略；设备存在同类待处理/处理中工单则跳过；首次排到次日，
+// 之后从上次完成日顺延周期；逾期计划保留原日期（不向前补齐到今日）。
+// 每台设备独立事务并锁定设备行，连续点击或两人同时操作也不会产生重复计划。
 func (s *MaintenanceService) GeneratePlans(operator string) (int, error) {
-	devices, _, err := s.device.List(1, 200, "", "", "", "")
+	strategies, err := s.strategy.ListEnabled()
+	if err != nil {
+		return 0, util.NewAppError(http.StatusInternalServerError, constants.MsgInternalError, err)
+	}
+	byCategory := make(map[string][]model.MaintenanceStrategy, len(strategies))
+	for _, st := range strategies {
+		byCategory[st.Category] = append(byCategory[st.Category], st)
+	}
+
+	devices, _, err := s.device.List(1, 100000, "", "", "", "")
 	if err != nil {
 		return 0, util.NewAppError(http.StatusInternalServerError, constants.MsgInternalError, err)
 	}
 	created := 0
-	types := []string{constants.MaintenanceTypeDaily, constants.MaintenanceTypeWeekly, constants.MaintenanceTypeMonthly, constants.MaintenanceTypeYearly}
+	now := time.Now()
 	for _, d := range devices {
 		if d.Status == constants.DeviceStatusScrapped {
 			continue
 		}
-		_ = s.repo.DB().Transaction(func(tx *gorm.DB) error {
-			for _, t := range types {
-				exists, err := s.existsPending(tx, d.ID, t)
-				if err != nil {
-					return err
-				}
-				if exists {
-					continue
-				}
-				now := time.Now()
-				m := &model.MaintenanceRecord{
-					RecordNo:    util.GenSerial("MT"),
-					DeviceID:    d.ID,
-					DeviceName:  d.Name,
-					Type:        t,
-					Status:      constants.MaintenanceStatusPending,
-					PlannedDate: planDate(now, t),
-					Content:     "自动生成" + util.MaintenanceTypeText(t) + "保养计划",
-					CreatedBy:   operator,
-				}
-				if err := tx.Create(m).Error; err != nil {
-					return err
-				}
-				created++
-			}
-			return nil
-		})
+		strategiesForDevice := byCategory[d.Category]
+		if len(strategiesForDevice) == 0 {
+			continue
+		}
+		n, err := s.generateForDevice(d, strategiesForDevice, now, operator)
+		if err != nil {
+			return created, err
+		}
+		created += n
 	}
-	s.log.Info("自动生成保养计划完成", "created", created, "operator", operator)
+	s.log.Info(fmt.Sprintf(constants.LogMaintenancePlansGenerated, created, operator))
 	return created, nil
 }
 
-func (s *MaintenanceService) existsPending(tx *gorm.DB, deviceID uint, mType string) (bool, error) {
-	var n int64
-	err := tx.Model(&model.MaintenanceRecord{}).
-		Where("device_id = ? AND type = ? AND status = ?", deviceID, mType, constants.MaintenanceStatusPending).
-		Count(&n).Error
-	return n > 0, err
+// generateForDevice 单台设备的计划生成（独立事务 + 设备行锁，并发安全）。
+func (s *MaintenanceService) generateForDevice(d model.Device, strategies []model.MaintenanceStrategy, now time.Time, operator string) (int, error) {
+	created := 0
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		// 锁定设备行：两个并发生成请求在此串行化，后执行者能看到前者插入的待处理工单。
+		locked, err := s.device.FindByIDForUpdate(tx, d.ID)
+		if err != nil {
+			return err
+		}
+		if locked.Status == constants.DeviceStatusScrapped {
+			return nil
+		}
+		for _, st := range strategies {
+			n, err := s.repo.CountActiveTx(tx, d.ID, st.Type, activeMaintenanceStatuses())
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				// 已有同类待处理/处理中工单（含逾期未完成计划），跳过且保留原日期。
+				continue
+			}
+			planned := nextPlanDate(tx, s.repo, d.ID, st.Type, st.IntervalDays, now)
+			m := &model.MaintenanceRecord{
+				RecordNo:    util.GenSerial("MT"),
+				DeviceID:    locked.ID,
+				DeviceName:  locked.Name,
+				Type:        st.Type,
+				Status:      constants.MaintenanceStatusPending,
+				PlannedDate: &planned,
+				Content:     "自动生成" + util.MaintenanceTypeText(st.Type) + "保养计划",
+				CreatedBy:   operator,
+			}
+			if err := tx.Create(m).Error; err != nil {
+				return err
+			}
+			created++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, wrapSvcErr(err)
+	}
+	return created, nil
+}
+
+// nextPlanDate 计算下一期计划日期：有完成记录从上次完成日顺延周期，否则首次排到次日；
+// 顺延结果即使已逾期也保留原日期（不补齐到今日）。
+func nextPlanDate(tx *gorm.DB, repo *repository.MaintenanceRepository, deviceID uint, mType string, intervalDays int, now time.Time) time.Time {
+	base := startOfDay(now).AddDate(0, 0, 1) // 初次排到次日 00:00
+	last, err := repo.LastCompletedTx(tx, deviceID, mType, constants.MaintenanceStatusCompleted)
+	if err == nil && last.ExecutedDate != nil {
+		base = startOfDay(*last.ExecutedDate).AddDate(0, 0, intervalDays)
+	}
+	return base
+}
+
+// activeMaintenanceStatuses 生成计划时视为占用的状态：待处理 + 处理中。
+func activeMaintenanceStatuses() []string {
+	return []string{constants.MaintenanceStatusPending, constants.MaintenanceStatusInProgress}
+}
+
+// startOfDay 截断到当日零点，保证周期顺延按自然日计算。
+func startOfDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+// chainNextPlan 本期完成后在同一事务内顺延生成下一期计划（仅周期保养类型，且策略处于启用状态）。
+// 调用前必须已锁定设备行，保证与并发生成请求互斥。
+func (s *MaintenanceService) chainNextPlan(tx *gorm.DB, completed *model.MaintenanceRecord, category string, now time.Time, operator string) error {
+	if completed.Type == constants.MaintenanceTypeRepair {
+		return nil
+	}
+	st, err := s.strategy.FindByCategoryTypeTx(tx, category, completed.Type)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil // 未配置策略的类别类型不顺延。
+		}
+		return err
+	}
+	if !st.Enabled {
+		return nil // 策略已停用不顺延。
+	}
+	n, err := s.repo.CountActiveTx(tx, completed.DeviceID, completed.Type, activeMaintenanceStatuses())
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	planned := startOfDay(now).AddDate(0, 0, st.IntervalDays)
+	m := &model.MaintenanceRecord{
+		RecordNo:    util.GenSerial("MT"),
+		DeviceID:    completed.DeviceID,
+		DeviceName:  completed.DeviceName,
+		Type:        completed.Type,
+		Status:      constants.MaintenanceStatusPending,
+		PlannedDate: &planned,
+		Content:     "完成上一期后自动顺延的" + util.MaintenanceTypeText(completed.Type) + "保养计划",
+		CreatedBy:   operator,
+	}
+	if err := tx.Create(m).Error; err != nil {
+		return err
+	}
+	s.log.Info(fmt.Sprintf(constants.LogMaintenanceChainCreated, completed.RecordNo, completed.DeviceID, completed.Type, util.FormatDate(&planned)))
+	return nil
 }
 
 // List 分页查询保养/维修记录。
@@ -157,7 +251,7 @@ func (s *MaintenanceService) Start(id uint, req *dto.StartMaintenanceReq, operat
 	return updated, nil
 }
 
-// Complete 完成工单（更新工时/成本/配件，恢复设备状态）。
+// Complete 完成工单（更新工时/成本/配件，恢复设备状态；周期保养完成后顺延生成下一期计划）。
 func (s *MaintenanceService) Complete(id uint, req *dto.CompleteMaintenanceReq, operator string) (*model.MaintenanceRecord, error) {
 	var updated *model.MaintenanceRecord
 	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
@@ -190,6 +284,16 @@ func (s *MaintenanceService) Complete(id uint, req *dto.CompleteMaintenanceReq, 
 		}
 		if err := tx.Model(&model.Device{}).Where("id = ?", m.DeviceID).Update("last_maintenance_at", now).Error; err != nil {
 			return err
+		}
+		// 锁定设备行后顺延下一期：与并发的生成计划请求互斥，保证同一设备不产生重复计划。
+		locked, err := s.device.FindByIDForUpdate(tx, m.DeviceID)
+		if err != nil {
+			return err
+		}
+		if locked.Status != constants.DeviceStatusScrapped {
+			if err := s.chainNextPlan(tx, m, locked.Category, now, operator); err != nil {
+				return err
+			}
 		}
 		updated = m
 		return nil
@@ -232,22 +336,4 @@ func (s *MaintenanceService) Cancel(id uint, req *dto.CancelMaintenanceReq, oper
 	s.log.Info(fmt.Sprintf(constants.LogMaintenanceCancelled, updated.RecordNo, req.Reason, updated.Status))
 	s.audit.Record(0, operator, "CANCEL", "maintenance", util.Uint64String(updated.ID), "取消工单: "+updated.RecordNo, operator, "")
 	return updated, nil
-}
-
-func planDate(now time.Time, mType string) *time.Time {
-	var add time.Duration
-	switch mType {
-	case constants.MaintenanceTypeDaily:
-		add = 24 * time.Hour
-	case constants.MaintenanceTypeWeekly:
-		add = 7 * 24 * time.Hour
-	case constants.MaintenanceTypeMonthly:
-		add = 30 * 24 * time.Hour
-	case constants.MaintenanceTypeYearly:
-		add = 365 * 24 * time.Hour
-	default:
-		add = 30 * 24 * time.Hour
-	}
-	t := now.Add(add)
-	return pointerx.TimePtr(t)
 }

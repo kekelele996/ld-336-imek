@@ -21,7 +21,7 @@ docker compose up -d --build
 
 1. **设备台账管理**：全院医疗器械电子台账，支持按科室、设备类型、状态、关键字多维度检索；登记设备自动生成分发条码。
 2. **采购与验收流程**：科室申请 → 设备科审核 → 院长审批 → 到货登记 → 验收登记（配件清单、合格证/注册证）→ 正式入台账并生成分发条码。
-3. **维护与保养管理**：日检/周检/月检/年检保养计划自动生成与到期提醒，工程师执行并记录保养内容、更换配件、工时与费用；故障扫码快速报修与维修过程记录。
+3. **维护与保养管理**：按设备类别配置保养周期策略（日检/周检/月检/年检，可停用或调整周期），一键生成保养计划（仅处理启用策略；有同类待处理/处理中工单自动跳过；初次排到次日，之后从上次完成日顺延，逾期保留原日期；本期完成自动顺延下一期；设备行锁保证并发/重复点击不产生重复计划），工程师执行并记录保养内容、更换配件、工时与费用；故障扫码快速报修与维修过程记录。
 4. **计量与质控管理**：计量台账（器具编号、周期、上下次计量日期），到期预警清单，计量结果登记（不合格自动标记设备禁用）。
 5. **设备调拨与报废**：科室间调拨申请审批后自动更新设备科室与责任人；报废审批通过后设备状态变更为"已报废"并归档。
 6. **资产统计与合规报表**：设备总数、资产总值、科室/品牌/类型分布、维修成本、计量到期预警、待处理采购等总览数据，满足监管数据报送要求。
@@ -142,10 +142,13 @@ cd frontend && npm install && npm run build
 | POST | /purchases/:id/accept | 验收登记并入台账 | DEVICE_ADMIN |
 | GET | /maintenances | 保养/维修记录列表 | 登录 |
 | POST | /maintenances | 创建保养/维修工单（含报修） | 登录 |
-| POST | /maintenances/plan/generate | 自动生成保养计划 | DEVICE_ADMIN/ENGINEER |
+| POST | /maintenances/plan/generate | 按启用策略自动生成保养计划（幂等防重） | DEVICE_ADMIN/ENGINEER |
 | POST | /maintenances/:id/start | 开始执行工单 | 登录 |
-| POST | /maintenances/:id/complete | 完成工单 | 登录 |
+| POST | /maintenances/:id/complete | 完成工单（周期保养自动顺延下一期） | 登录 |
 | POST | /maintenances/:id/cancel | 取消工单 | 登录 |
+| GET | /maintenance-strategies | 保养周期策略列表（按设备类别） | 登录 |
+| POST | /maintenance-strategies | 新建周期策略（同类别同类型唯一） | DEVICE_ADMIN |
+| PUT | /maintenance-strategies/:id | 调整周期/停用启用策略 | DEVICE_ADMIN |
 | GET | /calibrations | 计量台账列表 | 登录 |
 | POST | /calibrations | 建立计量台账 | 登录 |
 | GET | /calibrations/due | 计量到期预警清单 | 登录 |
@@ -165,7 +168,8 @@ cd frontend && npm install && npm run build
 
 - `GET /api/v1/devices?status=...`（设备列表）与 `GET /api/v1/stats/overview`（统计总览）复用 `DeviceRepository.Count`（`internal/repository/device_repository.go`）与 `DeviceRepository.GroupCount`。
 - `POST /api/v1/purchases/:id/accept`（验收入台账）、`POST /api/v1/transfers/:id/approve`（调拨）、`POST /api/v1/scraps/:id/approve`（报废）均复用 `DeviceRepository.UpdateStatusTx`（事务内状态流转，`internal/repository/device_repository.go`）。
-- 所有写操作（注册/登录/采购/调拨/报废/计量/保养）统一复用 `AuditService.Record`（`internal/service/audit_service.go`）与 `AuditRepository.Create` 写入审计日志。
+- `POST /api/v1/maintenances/plan/generate`（生成保养计划）与 `POST /api/v1/maintenances/:id/complete`（完成工单顺延下一期）复用 `MaintenanceRepository.CountActiveTx`（待处理/处理中去重）与 `DeviceRepository.FindByIDForUpdate`（设备行锁防并发重复，`internal/repository/maintenance_repository.go`）。
+- 所有写操作（注册/登录/采购/调拨/报废/计量/保养/周期策略）统一复用 `AuditService.Record`（`internal/service/audit_service.go`）与 `AuditRepository.Create` 写入审计日志。
 
 ## curl 调用示例
 
@@ -205,7 +209,7 @@ curl -s http://localhost:19936/api/v1/stats/overview -H "Authorization: Bearer $
 | 角色 RoleType（SUPER_ADMIN/DEVICE_ADMIN/DEAN/DEPARTMENT/ENGINEER） | `internal/constants/roles.go`、`internal/model/user.go`、`internal/dto/user_dto.go`、`internal/middleware/rbac.go`、`internal/router/user.go`、`internal/router/purchase.go`、`internal/router/maintenance.go`、`internal/router/transfer.go`、`internal/router/scrap.go`、`internal/router/audit.go`、`internal/util/formatters.go(RoleText)`、`internal/service/user_service.go` | `src/constants/enums.ts`、`src/app/guards/role.guard.ts`、`src/app/layouts/main-layout.component.ts`、`src/app/pages/purchases/purchases.component.ts`、`src/app/pages/transfers/transfers.component.ts`、`src/app/pages/scraps/scraps.component.ts` |
 | 设备状态 DeviceStatus（in_storage/in_use/under_maintenance/disabled/scrapped） | `internal/constants/status.go`、`internal/model/device.go`、`internal/dto/device_dto.go`、`internal/service/device_service.go`、`internal/service/purchase_service.go`、`internal/service/maintenance_service.go`、`internal/service/calibration_service.go`、`internal/service/scrap_service.go`、`internal/repository/device_repository.go`、`internal/util/formatters.go`、`internal/constants/error_codes.go`、`internal/constants/log_templates.go` | `src/constants/enums.ts`、`src/app/components/status-badge/status-badge.component.ts`、`src/app/pages/devices/devices.component.ts`、`src/utils/format.ts` |
 | 采购状态 PurchaseStatus（pending_device_admin/pending_dean/approved/delivered/accepted/rejected） | `internal/constants/status.go`、`internal/model/purchase_request.go`、`internal/service/purchase_service.go`、`internal/repository/purchase_repository.go`、`internal/util/formatters.go`、`internal/constants/log_templates.go`、`internal/constants/messages.go` | `src/constants/enums.ts`、`src/app/pages/purchases/purchases.component.ts`、`src/app/components/status-badge/status-badge.component.ts`、`src/utils/format.ts` |
-| 保养/维修类型与状态（daily/weekly/monthly/yearly/repair；pending/in_progress/completed/cancelled） | `internal/constants/status.go`、`internal/model/maintenance_record.go`、`internal/dto/maintenance_dto.go`、`internal/service/maintenance_service.go`、`internal/repository/maintenance_repository.go`、`internal/util/formatters.go`、`internal/constants/log_templates.go` | `src/constants/enums.ts`、`src/app/pages/maintenance/maintenance.component.ts`、`src/app/components/status-badge/status-badge.component.ts`、`src/utils/format.ts` |
+| 保养/维修类型与状态（daily/weekly/monthly/yearly/repair；pending/in_progress/completed/cancelled） | `internal/constants/status.go`、`internal/model/maintenance_record.go`、`internal/model/maintenance_strategy.go`、`internal/dto/maintenance_dto.go`、`internal/dto/maintenance_strategy_dto.go`、`internal/service/maintenance_service.go`、`internal/service/maintenance_strategy_service.go`、`internal/repository/maintenance_repository.go`、`internal/repository/maintenance_strategy_repository.go`、`internal/util/formatters.go`、`internal/constants/log_templates.go` | `src/constants/enums.ts`、`src/app/pages/maintenance/maintenance.component.ts`、`src/app/pages/maintenance/strategy-dialog.component.ts`、`src/app/components/status-badge/status-badge.component.ts`、`src/utils/format.ts` |
 | 计量状态 CalibrationStatus（normal/unqualified/due/expired） | `internal/constants/status.go`、`internal/model/calibration_record.go`、`internal/service/calibration_service.go`、`internal/repository/calibration_repository.go`、`internal/util/formatters.go`、`internal/constants/log_templates.go` | `src/constants/enums.ts`、`src/app/pages/calibrations/calibrations.component.ts`、`src/app/components/status-badge/status-badge.component.ts`、`src/utils/format.ts` |
 | 调拨/报废状态（pending/approved/rejected） | `internal/constants/status.go`、`internal/model/transfer_request.go`、`internal/model/scrap_request.go`、`internal/service/transfer_service.go`、`internal/service/scrap_service.go`、`internal/util/formatters.go`、`internal/constants/log_templates.go` | `src/constants/enums.ts`、`src/app/pages/transfers/transfers.component.ts`、`src/app/pages/scraps/scraps.component.ts`、`src/app/components/status-badge/status-badge.component.ts`、`src/utils/format.ts` |
 

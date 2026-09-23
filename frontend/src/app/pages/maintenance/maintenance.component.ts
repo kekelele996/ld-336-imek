@@ -17,6 +17,7 @@ import { StatusBadgeComponent } from '../../components/status-badge/status-badge
 import { EmptyStateComponent } from '../../components/empty-state/empty-state.component';
 import { ConfirmDialogComponent, ConfirmDialogData } from '../../components/confirm-dialog/confirm-dialog.component';
 import { MaintenanceFormDialogComponent, MaintenanceFormData } from './maintenance-form-dialog.component';
+import { StrategyDialogComponent } from './strategy-dialog.component';
 import { MaintenanceStore } from '../../../stores/maintenance.store';
 import { MaintenanceRecord } from '../../../models';
 import {
@@ -54,7 +55,8 @@ import { Subject, takeUntil } from 'rxjs';
         </mat-select>
       </mat-form-field>
       <div class="spacer"></div>
-      <button mat-stroked-button color="primary" (click)="generatePlans()"><mat-icon>auto_awesome</mat-icon> 生成保养计划</button>
+      <button mat-stroked-button color="primary" (click)="openStrategies()"><mat-icon>schedule</mat-icon> 周期策略</button>
+      <button mat-stroked-button color="primary" [disabled]="generating" (click)="generatePlans()"><mat-icon>auto_awesome</mat-icon> {{ generating ? '生成中...' : '生成保养计划' }}</button>
       <button mat-flat-button color="accent" (click)="openCreate()"><mat-icon>add</mat-icon> 报修/创建工单</button>
     </form>
 <mat-card>
@@ -127,6 +129,7 @@ export class MaintenanceComponent implements OnInit, OnDestroy {
   columns = ['record_no', 'device_name', 'type', 'engineer', 'planned_date', 'cost', 'status', 'actions'];
   page = 1;
   pageSize = 10;
+  generating = false;
   form = this.fb.nonNullable.group({ type: [''], status: [''] });
 
   ngOnInit(): void {
@@ -143,10 +146,23 @@ export class MaintenanceComponent implements OnInit, OnDestroy {
   onPage(e: { pageIndex: number; pageSize: number }): void { this.page = e.pageIndex + 1; this.pageSize = e.pageSize; this.load(); }
 
   generatePlans(): void {
+    if (this.generating) return;
+    this.generating = true;
     maintenancePlanApi(this.http).subscribe({
-      next: (res) => { this.snackBar.open(`已自动生成 ${res.created} 条保养计划`, '关闭', { duration: 2500 }); this.load(); },
-      error: (err) => this.snackBar.open(parseHttpError(err), '关闭', { duration: 3000 }),
+      next: (res) => {
+        this.generating = false;
+        this.snackBar.open(`已自动生成 ${res.created} 条保养计划`, '关闭', { duration: 2500 });
+        this.load();
+      },
+      error: (err) => {
+        this.generating = false;
+        this.snackBar.open(parseHttpError(err), '关闭', { duration: 3000 });
+      },
     });
+  }
+
+  openStrategies(): void {
+    this.dialog.open(StrategyDialogComponent, { width: '820px' });
   }
 
   openCreate(): void {

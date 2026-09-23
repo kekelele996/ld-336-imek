@@ -57,6 +57,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 种子默认保养周期策略（幂等，不覆盖人工调整）。
+	strategySvc := service.NewMaintenanceStrategyService(repository.NewMaintenanceStrategyRepository(db), auditSvc, util.Log)
+	if err := strategySvc.SeedDefaults(); err != nil {
+		util.Log.Error("初始化默认保养周期策略失败", "err", err)
+		os.Exit(1)
+	}
+
 	engine := router.New(router.Deps{DB: db, Cfg: cfg, Log: util.Log, RDB: rdb})
 
 	srv := &http.Server{
