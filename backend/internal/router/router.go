@@ -17,10 +17,10 @@ import (
 
 // Deps 路由装配依赖。
 type Deps struct {
-	DB   *gorm.DB
-	Cfg  *config.Config
-	Log  *slog.Logger
-	RDB  *redis.Client
+	DB  *gorm.DB
+	Cfg *config.Config
+	Log *slog.Logger
+	RDB *redis.Client
 }
 
 // New 构建 Gin 引擎并注册全部路由。
@@ -44,6 +44,7 @@ func New(deps Deps) *gin.Engine {
 	deviceRepo := repository.NewDeviceRepository(deps.DB)
 	purchaseRepo := repository.NewPurchaseRepository(deps.DB)
 	maintenanceRepo := repository.NewMaintenanceRepository(deps.DB)
+	maintenancePolicyRepo := repository.NewMaintenancePolicyRepository(deps.DB)
 	calibrationRepo := repository.NewCalibrationRepository(deps.DB)
 	transferRepo := repository.NewTransferRepository(deps.DB)
 	scrapRepo := repository.NewScrapRepository(deps.DB)
@@ -54,7 +55,8 @@ func New(deps Deps) *gin.Engine {
 	userSvc := service.NewUserService(userRepo, auditSvc, deps.Cfg.JWTSecret, 24, deps.Log)
 	deviceSvc := service.NewDeviceService(deviceRepo, auditSvc, deps.Log)
 	purchaseSvc := service.NewPurchaseService(purchaseRepo, deviceRepo, auditSvc, deps.Log)
-	maintenanceSvc := service.NewMaintenanceService(maintenanceRepo, deviceRepo, auditSvc, deps.Log)
+	maintenanceSvc := service.NewMaintenanceService(maintenanceRepo, deviceRepo, maintenancePolicyRepo, auditSvc, deps.Log)
+	maintenancePolicySvc := service.NewMaintenancePolicyService(maintenancePolicyRepo, deviceRepo, auditSvc, deps.Log)
 	calibrationSvc := service.NewCalibrationService(calibrationRepo, deviceRepo, auditSvc, deps.Log)
 	transferSvc := service.NewTransferService(transferRepo, deviceRepo, auditSvc, deps.Log)
 	scrapSvc := service.NewScrapService(scrapRepo, deviceRepo, auditSvc, deps.Log)
@@ -66,6 +68,7 @@ func New(deps Deps) *gin.Engine {
 	deviceHandler := handler.NewDeviceHandler(deviceSvc)
 	purchaseHandler := handler.NewPurchaseHandler(purchaseSvc)
 	maintenanceHandler := handler.NewMaintenanceHandler(maintenanceSvc)
+	maintenancePolicyHandler := handler.NewMaintenancePolicyHandler(maintenancePolicySvc)
 	calibrationHandler := handler.NewCalibrationHandler(calibrationSvc)
 	transferHandler := handler.NewTransferHandler(transferSvc)
 	scrapHandler := handler.NewScrapHandler(scrapSvc)
@@ -82,6 +85,7 @@ func New(deps Deps) *gin.Engine {
 		registerDeviceRoutes(api, deviceHandler)
 		registerPurchaseRoutes(api, purchaseHandler)
 		registerMaintenanceRoutes(api, maintenanceHandler)
+		registerMaintenancePolicyRoutes(api, maintenancePolicyHandler)
 		registerCalibrationRoutes(api, calibrationHandler)
 		registerTransferRoutes(api, transferHandler)
 		registerScrapRoutes(api, scrapHandler)

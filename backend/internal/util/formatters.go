@@ -103,6 +103,14 @@ func MaintenanceStatusText(status string) string {
 	}
 }
 
+// MaintenanceIntervalText 保养周期（天）展示文本：0 表示停用。
+func MaintenanceIntervalText(intervalDays int) string {
+	if intervalDays <= 0 {
+		return "停用"
+	}
+	return fmt.Sprintf("每%d天", intervalDays)
+}
+
 // CalibrationStatusText 计量状态展示文本。
 func CalibrationStatusText(status string) string {
 	switch status {

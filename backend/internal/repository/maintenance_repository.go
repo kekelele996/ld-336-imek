@@ -107,3 +107,35 @@ func (r *MaintenanceRepository) IsRecordNoTaken(v string) (bool, error) {
 	}
 	return n > 0, nil
 }
+
+// OpenStatuses 未完结工单状态：待处理 / 处理中。
+var OpenStatuses = []string{"pending", "in_progress"}
+
+// CountOpenByTypeTx 统计某设备某类保养是否存在待处理或处理中的工单（事务内调用，配合设备行锁防重）。
+func (r *MaintenanceRepository) CountOpenByTypeTx(tx *gorm.DB, deviceID uint, mType string) (int64, error) {
+	var n int64
+	err := tx.Model(&model.MaintenanceRecord{}).
+		Where("device_id = ? AND type = ? AND status IN ?", deviceID, mType, OpenStatuses).
+		Count(&n).Error
+	return n, err
+}
+
+// LatestCompletedByTypeTx 查询某设备某类保养最近一次已完成工单（用于顺延下期计划日期）。
+func (r *MaintenanceRepository) LatestCompletedByTypeTx(tx *gorm.DB, deviceID uint, mType string) (*model.MaintenanceRecord, error) {
+	var m model.MaintenanceRecord
+	err := tx.Where("device_id = ? AND type = ? AND status = ?", deviceID, mType, "completed").
+		Order("executed_date DESC, id DESC").
+		First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// CreateTx 在事务内创建工单。
+func (r *MaintenanceRepository) CreateTx(tx *gorm.DB, m *model.MaintenanceRecord) error {
+	return tx.Create(m).Error
+}

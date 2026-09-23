@@ -57,6 +57,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 初始化按设备类别的默认保养周期策略。
+	seedPolicyService := service.NewMaintenancePolicyService(
+		repository.NewMaintenancePolicyRepository(db), repository.NewDeviceRepository(db), auditSvc, util.Log)
+	if err := seedPolicyService.EnsureDefaults(); err != nil {
+		util.Log.Error("初始化默认保养周期策略失败", "err", err)
+		os.Exit(1)
+	}
+
 	engine := router.New(router.Deps{DB: db, Cfg: cfg, Log: util.Log, RDB: rdb})
 
 	srv := &http.Server{

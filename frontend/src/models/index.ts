@@ -103,6 +103,21 @@ export interface MaintenanceRecord {
   created_by: string;
 }
 
+export interface MaintenancePolicy {
+  id?: number;
+  category: string;
+  daily_interval: number;
+  weekly_interval: number;
+  monthly_interval: number;
+  yearly_interval: number;
+  daily_enabled?: boolean;
+  weekly_enabled?: boolean;
+  monthly_enabled?: boolean;
+  yearly_enabled?: boolean;
+  updated_by?: string;
+  updated_at?: string;
+}
+
 export interface CalibrationRecord {
   id: number;
   instrument_no: string;

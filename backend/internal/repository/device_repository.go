@@ -56,6 +56,13 @@ func (r *DeviceRepository) FindByAssetCode(code string) (*model.Device, error) {
 	return &d, err
 }
 
+// ListAll 不分页查询全部设备（保养计划生成遍历使用），按 ID 升序避免并发事务加锁顺序不一致导致死锁。
+func (r *DeviceRepository) ListAll() ([]model.Device, error) {
+	var list []model.Device
+	err := r.db.Order("id ASC").Find(&list).Error
+	return list, err
+}
+
 // List 分页检索设备，支持科室/类型/状态/关键字多维过滤。
 func (r *DeviceRepository) List(page, pageSize int, department, category, status, keyword string) ([]model.Device, int64, error) {
 	var list []model.Device

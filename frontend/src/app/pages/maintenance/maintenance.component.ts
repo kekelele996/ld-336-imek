@@ -17,7 +17,9 @@ import { StatusBadgeComponent } from '../../components/status-badge/status-badge
 import { EmptyStateComponent } from '../../components/empty-state/empty-state.component';
 import { ConfirmDialogComponent, ConfirmDialogData } from '../../components/confirm-dialog/confirm-dialog.component';
 import { MaintenanceFormDialogComponent, MaintenanceFormData } from './maintenance-form-dialog.component';
+import { MaintenancePolicyDialogComponent } from './maintenance-policy-dialog.component';
 import { MaintenanceStore } from '../../../stores/maintenance.store';
+import { MaintenancePolicyStore } from '../../../stores/maintenance-policy.store';
 import { MaintenanceRecord } from '../../../models';
 import {
   maintenanceCreateApi, maintenancePlanApi, maintenanceStartApi, maintenanceCompleteApi, maintenanceCancelApi,
@@ -54,7 +56,12 @@ import { Subject, takeUntil } from 'rxjs';
         </mat-select>
       </mat-form-field>
       <div class="spacer"></div>
-      <button mat-stroked-button color="primary" (click)="generatePlans()"><mat-icon>auto_awesome</mat-icon> 生成保养计划</button>
+      <button mat-stroked-button (click)="openPolicies()" [disabled]="policyStore.saving()">
+        <mat-icon>tune</mat-icon> 周期策略
+      </button>
+      <button mat-stroked-button color="primary" (click)="generatePlans()" [disabled]="generating">
+        <mat-icon>auto_awesome</mat-icon> {{ generating ? '生成中...' : '生成保养计划' }}
+      </button>
       <button mat-flat-button color="accent" (click)="openCreate()"><mat-icon>add</mat-icon> 报修/创建工单</button>
     </form>
 <mat-card>
@@ -118,6 +125,7 @@ export class MaintenanceComponent implements OnInit, OnDestroy {
   private snackBar = inject(MatSnackBar);
   private destroy$ = new Subject<void>();
   store = inject(MaintenanceStore);
+  policyStore = inject(MaintenancePolicyStore);
 
   statusText = MAINTENANCE_STATUS_TEXT;
   typeText = MAINTENANCE_TYPE_TEXT;
@@ -127,6 +135,7 @@ export class MaintenanceComponent implements OnInit, OnDestroy {
   columns = ['record_no', 'device_name', 'type', 'engineer', 'planned_date', 'cost', 'status', 'actions'];
   page = 1;
   pageSize = 10;
+  generating = false;
   form = this.fb.nonNullable.group({ type: [''], status: [''] });
 
   ngOnInit(): void {
@@ -143,9 +152,27 @@ export class MaintenanceComponent implements OnInit, OnDestroy {
   onPage(e: { pageIndex: number; pageSize: number }): void { this.page = e.pageIndex + 1; this.pageSize = e.pageSize; this.load(); }
 
   generatePlans(): void {
+    // 连续点击时直接忽略，同一设备的待处理/处理中工单查重也在后端事务内兜底。
+    if (this.generating) return;
+    this.generating = true;
     maintenancePlanApi(this.http).subscribe({
-      next: (res) => { this.snackBar.open(`已自动生成 ${res.created} 条保养计划`, '关闭', { duration: 2500 }); this.load(); },
-      error: (err) => this.snackBar.open(parseHttpError(err), '关闭', { duration: 3000 }),
+      next: (res) => {
+        this.generating = false;
+        this.snackBar.open(`已生成 ${res.created} 条保养计划，跳过 ${res.skipped ?? 0} 条已有同类工单`, '关闭', { duration: 3000 });
+        this.load();
+      },
+      error: (err) => {
+        this.generating = false;
+        this.snackBar.open(parseHttpError(err), '关闭', { duration: 3000 });
+      },
+    });
+  }
+
+  openPolicies(): void {
+    this.policyStore.load();
+    this.dialog.open(MaintenancePolicyDialogComponent, {
+      width: '960px',
+      maxWidth: '92vw',
     });
   }
 

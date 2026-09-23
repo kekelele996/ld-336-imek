@@ -21,7 +21,7 @@ docker compose up -d --build
 
 1. **设备台账管理**：全院医疗器械电子台账，支持按科室、设备类型、状态、关键字多维度检索；登记设备自动生成分发条码。
 2. **采购与验收流程**：科室申请 → 设备科审核 → 院长审批 → 到货登记 → 验收登记（配件清单、合格证/注册证）→ 正式入台账并生成分发条码。
-3. **维护与保养管理**：日检/周检/月检/年检保养计划自动生成与到期提醒，工程师执行并记录保养内容、更换配件、工时与费用；故障扫码快速报修与维修过程记录。
+3. **维护与保养管理**：按设备类别配置日检/周检/月检/年检周期策略（可停用或调整周期天数），点击生成时仅处理启用策略；每台设备独立事务加设备行锁，同类存在待处理/处理中工单即跳过，连续点击或两人同时操作也不会产生重复计划；首次计划排到次日，之后按上次完成日期顺延周期，逾期计划保留原计算日期；本期工单完成后自动顺延生成下一期。故障扫码快速报修与维修过程记录。
 4. **计量与质控管理**：计量台账（器具编号、周期、上下次计量日期），到期预警清单，计量结果登记（不合格自动标记设备禁用）。
 5. **设备调拨与报废**：科室间调拨申请审批后自动更新设备科室与责任人；报废审批通过后设备状态变更为"已报废"并归档。
 6. **资产统计与合规报表**：设备总数、资产总值、科室/品牌/类型分布、维修成本、计量到期预警、待处理采购等总览数据，满足监管数据报送要求。
@@ -142,7 +142,9 @@ cd frontend && npm install && npm run build
 | POST | /purchases/:id/accept | 验收登记并入台账 | DEVICE_ADMIN |
 | GET | /maintenances | 保养/维修记录列表 | 登录 |
 | POST | /maintenances | 创建保养/维修工单（含报修） | 登录 |
-| POST | /maintenances/plan/generate | 自动生成保养计划 | DEVICE_ADMIN/ENGINEER |
+| POST | /maintenances/plan/generate | 按类别周期策略生成保养计划（返回 created/skipped） | DEVICE_ADMIN/SUPER_ADMIN/ENGINEER |
+| GET | /maintenance-policies | 查询按设备类别配置的保养周期策略 | 登录 |
+| PUT | /maintenance-policies | 批量保存保养周期策略（停用或调整日/周/月/年检周期） | DEVICE_ADMIN/SUPER_ADMIN |
 | POST | /maintenances/:id/start | 开始执行工单 | 登录 |
 | POST | /maintenances/:id/complete | 完成工单 | 登录 |
 | POST | /maintenances/:id/cancel | 取消工单 | 登录 |

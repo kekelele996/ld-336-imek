@@ -34,8 +34,8 @@ export function maintenanceCreateApi(http: HttpClient, payload: CreateMaintenanc
   return http.post<ApiResp<MaintenanceRecord>>(`${API_BASE}/v1/maintenances`, payload).pipe(map(extractData));
 }
 
-export function maintenancePlanApi(http: HttpClient): Observable<{ created: number }> {
-  return http.post<ApiResp<{ created: number }>>(`${API_BASE}/v1/maintenances/plan/generate`, {}).pipe(map(extractData));
+export function maintenancePlanApi(http: HttpClient): Observable<{ created: number; skipped: number }> {
+  return http.post<ApiResp<{ created: number; skipped: number }>>(`${API_BASE}/v1/maintenances/plan/generate`, {}).pipe(map(extractData));
 }
 
 export function maintenanceStartApi(http: HttpClient, id: number, payload: StartPayload): Observable<MaintenanceRecord> {

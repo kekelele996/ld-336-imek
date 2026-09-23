@@ -17,6 +17,8 @@ const (
 	MsgDuplicateInstrumentNo = "计量器具编号已存在"
 	MsgDeviceNotAllowed     = "该设备状态不允许执行此操作"
 	MsgDeviceInScrapped     = "已报废设备不可操作"
+	MsgPolicyCategoryEmpty  = "设备类别不能为空"
+	MsgPolicyIntervalInvalid = "保养周期必须为 0（停用）或 1~3650 之间的整数"
 	MsgRateLimited          = "请求过于频繁，请稍后再试"
 	MsgInvalidToken         = "无效的访问令牌"
 	MsgTokenExpired         = "访问令牌已过期"

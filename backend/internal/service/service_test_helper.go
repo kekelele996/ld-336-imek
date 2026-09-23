@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/glebarez/sqlite"
 	"github.com/medasset/medasset/internal/model"
 	"github.com/medasset/medasset/internal/repository"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -26,7 +26,7 @@ func newTestServiceEnv(t *testing.T) *testEnv {
 		t.Fatalf("open sqlite failed: %v", err)
 	}
 	if err := db.AutoMigrate(&model.User{}, &model.Device{}, &model.PurchaseRequest{},
-		&model.MaintenanceRecord{}, &model.CalibrationRecord{}, &model.TransferRequest{},
+		&model.MaintenanceRecord{}, &model.MaintenancePolicy{}, &model.CalibrationRecord{}, &model.TransferRequest{},
 		&model.ScrapRequest{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("migrate failed: %v", err)
 	}

@@ -56,12 +56,12 @@ func (h *MaintenanceHandler) Create(c *gin.Context) {
 // GeneratePlans 自动生成保养计划。
 func (h *MaintenanceHandler) GeneratePlans(c *gin.Context) {
 	operator := middleware.CurrentUser(c)
-	n, err := h.svc.GeneratePlans(operator.Username)
+	result, err := h.svc.GeneratePlans(operator.Username)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	util.OK(c, gin.H{"created": n})
+	util.OK(c, result)
 }
 
 // Start 开始执行工单。
